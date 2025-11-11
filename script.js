@@ -205,8 +205,8 @@ async function updateDepthMap() {
 // Convert screen position to 3D world
 function screenToWorld(screenX, screenY, depth) {
     // Convert hand tracking coordinates (0-1) to NDC (-1 to 1)
-    // Don't mirror - use coordinates as-is
-    const ndcX = (screenX * 2) - 1;
+    // Mirror horizontal axis to match camera view
+    const ndcX = -((screenX * 2) - 1);  // Invert X axis
     const ndcY = -(screenY * 2) + 1;
 
     const vector = new THREE.Vector3(ndcX, ndcY, -1);
@@ -324,7 +324,8 @@ function detectFist(landmarks) {
 
 // Find cube at screen position
 function findCubeAtScreenPosition(screenX, screenY) {
-    const ndcX = (screenX * 2) - 1;
+    // Mirror horizontal axis to match camera view
+    const ndcX = -((screenX * 2) - 1);  // Invert X axis
     const ndcY = -(screenY * 2) + 1;
 
     const raycaster = new THREE.Raycaster();
