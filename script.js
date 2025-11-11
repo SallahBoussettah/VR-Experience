@@ -500,8 +500,8 @@ async function startAR() {
     // Request orientation permission
     await requestOrientationPermission();
 
-    // Initialize webcam
-    const webcamOk = await initWebcam();
+    // Initialize webcam with current facing mode
+    const webcamOk = await initWebcam(currentFacingMode);
     if (!webcamOk) return;
 
     // Show video
