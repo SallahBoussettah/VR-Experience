@@ -853,32 +853,56 @@ document.getElementById('clear-all').addEventListener('click', () => {
     }
 });
 
-// Check WebXR Support
+// Check WebXR Support with detailed diagnostics
 async function checkWebXRSupport() {
-    if (navigator.xr) {
-        try {
-            isWebXRSupported = await navigator.xr.isSessionSupported('immersive-ar');
-            console.log('WebXR immersive-ar supported:', isWebXRSupported);
-            updateDebug('orientation', isWebXRSupported ? 'WebXR (6DOF) ✓' : 'Gyro only (3DOF)');
-            return isWebXRSupported;
-        } catch (error) {
-            console.warn('WebXR check failed:', error);
-        }
+    console.log('=== WebXR Diagnostics ===');
+
+    if (!navigator.xr) {
+        console.log('❌ navigator.xr not available');
+        updateDebug('orientation', 'No WebXR API');
+        return false;
     }
-    console.log('WebXR not available');
-    updateDebug('orientation', 'Gyro only (3DOF)');
-    return false;
+
+    console.log('✓ navigator.xr exists');
+
+    try {
+        isWebXRSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        console.log('WebXR immersive-ar supported:', isWebXRSupported);
+
+        if (isWebXRSupported) {
+            updateDebug('orientation', 'WebXR Ready ✓');
+            console.log('✓ Device supports WebXR immersive-ar');
+            console.log('✓ ARCore should be available');
+        } else {
+            updateDebug('orientation', 'WebXR Not Supported');
+            console.log('❌ Device does not support immersive-ar');
+            console.log('Possible reasons:');
+            console.log('  - ARCore not installed');
+            console.log('  - Device not ARCore compatible');
+            console.log('  - Chrome version too old');
+        }
+
+        return isWebXRSupported;
+    } catch (error) {
+        console.error('❌ WebXR check failed:', error);
+        updateDebug('orientation', 'WebXR Check Failed');
+        return false;
+    }
 }
 
 // Initialize WebXR Session
 async function startWebXRSession() {
+    console.log('=== Starting WebXR Session ===');
+
     try {
+        console.log('Requesting immersive-ar session with hit-test...');
+
         // Don't require dom-overlay as it might not be supported
         xrSession = await navigator.xr.requestSession('immersive-ar', {
             requiredFeatures: ['hit-test']
         });
 
-        console.log('WebXR session started');
+        console.log('✓ WebXR session created successfully!');
         updateDebug('orientation', 'WebXR Active (6DOF)');
 
         // Setup XR reference space
@@ -904,9 +928,35 @@ async function startWebXRSession() {
 
         return true;
     } catch (error) {
-        console.error('WebXR session failed:', error);
-        console.error('Error details:', error.message);
-        updateDebug('orientation', 'WebXR Failed: ' + error.message);
+        console.error('❌ WebXR session failed!');
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Full error:', error);
+
+        let errorMsg = 'WebXR Failed';
+
+        // Provide specific error guidance
+        if (error.name === 'NotSupportedError') {
+            errorMsg = 'ARCore not installed';
+            console.log('Solution: Install "Google Play Services for AR" from Play Store');
+        } else if (error.name === 'SecurityError') {
+            errorMsg = 'HTTPS required';
+            console.log('Solution: Site must be served over HTTPS or localhost');
+        } else if (error.name === 'NotAllowedError') {
+            errorMsg = 'Permission denied';
+            console.log('Solution: Grant camera permission to browser');
+        } else if (error.message.includes('hit-test')) {
+            errorMsg = 'Hit-test not supported';
+            console.log('Solution: Update ARCore/Chrome to latest version');
+        } else {
+            errorMsg = error.message.substring(0, 20);
+        }
+
+        updateDebug('orientation', errorMsg);
+
+        // Show alert to user with helpful info
+        alert(`WebXR AR could not start.\n\nError: ${error.name}\n\nPossible fixes:\n1. Install "Google Play Services for AR" from Play Store\n2. Update Chrome to latest version\n3. Check if your Xiaomi Mi 11 Pro has ARCore support\n4. Grant camera permissions\n\nFalling back to gyroscope mode (3DOF).`);
+
         return false;
     }
 }
@@ -996,8 +1046,15 @@ async function init() {
         document.getElementById('status').textContent = '✅ Ready! WebXR AR Available (6DOF)';
     } else {
         document.getElementById('status').textContent = '✅ Ready! Gyro Mode (3DOF only)';
+
+        // Add link to ARCore checker if WebXR not supported
+        const instructions = document.getElementById('ar-instructions');
+        const checkLink = document.createElement('p');
+        checkLink.innerHTML = '<small><a href="https://immersive-web.github.io/webxr-samples/immersive-ar-session.html" target="_blank" style="color: #4CAF50;">Test WebXR on your device</a></small>';
+        instructions.appendChild(checkLink);
     }
     console.log('Initialization complete');
+    console.log('=== Diagnostics Complete ===');
 }
 
 window.addEventListener('load', init);
