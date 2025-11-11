@@ -22,6 +22,8 @@ let isFist = false;
 let videoElement = null;
 let depthEstimator = null;
 let currentDepthMap = null;
+let currentStream = null;
+let currentFacingMode = 'environment'; // 'environment' = back, 'user' = front
 
 // Device orientation tracking
 let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
@@ -436,29 +438,37 @@ async function initHandTracking() {
 }
 
 // Initialize webcam
-async function initWebcam() {
+async function initWebcam(facingMode = 'environment') {
     videoElement = document.getElementById('webcam');
 
     try {
-        // Try to get back camera explicitly
+        // Stop existing stream if any
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+        }
+
+        currentFacingMode = facingMode;
+
+        // Try to get camera with specified facing mode
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {
-                facingMode: { exact: 'environment' },
+                facingMode: { exact: facingMode },
                 width: { ideal: 1280 },
                 height: { ideal: 720 }
             }
         }).catch(async (err) => {
-            console.warn('Exact environment failed, trying ideal...', err);
+            console.warn(`Exact ${facingMode} failed, trying ideal...`, err);
             // Fallback if exact fails
             return await navigator.mediaDevices.getUserMedia({
                 video: {
-                    facingMode: 'environment',
+                    facingMode: facingMode,
                     width: 1280,
                     height: 720
                 }
             });
         });
 
+        currentStream = stream;
         videoElement.srcObject = stream;
         videoElement.play();
 
@@ -502,10 +512,24 @@ async function startAR() {
 
     // Update UI
     document.getElementById('start-ar').style.display = 'none';
+    document.getElementById('switch-camera').style.display = 'block';
     document.getElementById('status').textContent = '✅ AR Active! Pinch to place cubes';
     document.getElementById('ar-instructions').classList.add('active');
 
     console.log('AR started successfully');
+}
+
+// Switch camera
+async function switchCamera() {
+    const newFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+    console.log('Switching camera to:', newFacingMode);
+
+    document.getElementById('status').textContent = 'Switching camera...';
+
+    await initWebcam(newFacingMode);
+
+    const cameraName = newFacingMode === 'environment' ? 'Back' : 'Front';
+    document.getElementById('status').textContent = `✅ ${cameraName} Camera Active!`;
 }
 
 // Animation loop
@@ -535,6 +559,8 @@ function animate() {
 
 // UI Event Listeners
 document.getElementById('start-ar').addEventListener('click', startAR);
+
+document.getElementById('switch-camera').addEventListener('click', switchCamera);
 
 document.getElementById('toggle-grid').addEventListener('click', () => {
     gridSnapEnabled = !gridSnapEnabled;
