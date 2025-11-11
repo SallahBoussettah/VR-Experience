@@ -20,6 +20,12 @@ let gridSize = 0.2;  // Smaller grid for better precision
 let gridSnapEnabled = true;
 let selectedCube = null;
 
+// WebXR Setup
+let xrSession = null;
+let xrRefSpace = null;
+let xrHitTestSource = null;
+let isWebXRSupported = false;
+
 // Hand tracking
 let hands = null;
 let handLandmarks = null;
@@ -73,6 +79,7 @@ function initThreeJS() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
+    renderer.xr.enabled = true;  // Enable WebXR support
 
     // Lighting - improved for better depth perception
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -308,7 +315,52 @@ function screenToWorld(screenX, screenY, depth) {
     return position;
 }
 
-// Create cube
+// Create cube at specific world position (for WebXR)
+async function createCubeAt(position) {
+    const cubeSize = 0.1;  // 10cm cubes
+    const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const color = Math.random() * 0xffffff;
+    const material = new THREE.MeshStandardMaterial({
+        color: color,
+        roughness: 0.3,
+        metalness: 0.3,
+        emissive: color,
+        emissiveIntensity: 0.2
+    });
+
+    const cube = new THREE.Mesh(geometry, material);
+    cube.castShadow = true;
+    cube.receiveShadow = true;
+
+    // Add edge lines
+    const edges = new THREE.EdgesGeometry(geometry);
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+    const wireframe = new THREE.LineSegments(edges, lineMaterial);
+    cube.add(wireframe);
+
+    cube.position.copy(position);
+    cube.position.y += cubeSize / 2;  // Lift cube so it sits on surface
+
+    if (gridSnapEnabled) {
+        snapToGrid(cube);
+    }
+
+    scene.add(cube);
+
+    const arCube = {
+        mesh: cube,
+        worldPosition: cube.position.clone(),
+        locked: true,
+        isWebXR: true  // Mark as WebXR cube (no anchor updates needed)
+    };
+
+    arCubes.push(arCube);
+    console.log('WebXR cube placed at:', cube.position);
+
+    return cube;
+}
+
+// Create cube (for gyroscope mode)
 async function createCube(screenX, screenY, handDepth) {
     const cubeSize = 0.1;  // 10cm cubes
     const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
@@ -344,7 +396,7 @@ async function createCube(screenX, screenY, handDepth) {
 
     scene.add(cube);
 
-    // Store camera-relative position for proper AR anchoring
+    // Store camera-relative position for proper AR anchoring (gyro mode only)
     const cameraRelativePos = new THREE.Vector3();
     cameraRelativePos.copy(cube.position).sub(camera.position);
 
@@ -358,11 +410,12 @@ async function createCube(screenX, screenY, handDepth) {
         worldPosition: cube.position.clone(),
         depth: depth,
         initialCameraRotation: camera.rotation.clone(),
-        locked: true
+        locked: true,
+        isWebXR: false  // Gyro mode cube (needs anchor updates)
     };
 
     arCubes.push(arCube);
-    console.log('Cube placed at:', cube.position, 'Local:', localPos);
+    console.log('Gyro cube placed at:', cube.position, 'Local:', localPos);
 
     return cube;
 }
@@ -394,16 +447,18 @@ function clearAllCubes() {
     updateDebug('cubes', 0);
 }
 
-// Update AR anchors - transform cubes from camera-local to world space
+// Update AR anchors - transform cubes from camera-local to world space (gyro mode only)
 function updateARAnchors() {
     arCubes.forEach(arCube => {
-        if (arCube.locked && arCube.localPosition) {
+        // Only update anchors for gyro-mode cubes (not WebXR cubes)
+        if (!arCube.isWebXR && arCube.locked && arCube.localPosition) {
             // Convert from camera's local space to world space
             const worldPos = arCube.localPosition.clone();
             camera.localToWorld(worldPos);
 
             arCube.mesh.position.copy(worldPos);
         }
+        // WebXR cubes stay in their world positions automatically
     });
 }
 
@@ -499,7 +554,13 @@ async function onHandResults(results) {
         // Spawn with pinch (simplified - just create, no moving)
         else if (isPinching && !wasPinching) {
             console.log('Pinch detected, creating new cube');
-            selectedCube = await createCube(screenX, screenY, handDepth);
+            // In WebXR mode, place at reticle position (from hit-test)
+            // In gyro mode, place at hand position
+            if (xrSession && reticlePosition) {
+                selectedCube = await createCubeAt(reticlePosition);
+            } else {
+                selectedCube = await createCube(screenX, screenY, handDepth);
+            }
             updateDebug('cubes', arCubes.length);
         }
 
@@ -666,29 +727,39 @@ async function initWebcam(facingMode = 'environment', deviceId = null) {
 async function startAR() {
     document.getElementById('status').textContent = 'Starting AR...';
 
-    // Request orientation permission
-    await requestOrientationPermission();
+    // Try WebXR first if supported
+    if (isWebXRSupported) {
+        const webxrStarted = await startWebXRSession();
+        if (webxrStarted) {
+            document.getElementById('start-ar').style.display = 'none';
+            document.getElementById('switch-camera').style.display = 'none';  // No manual camera switch in WebXR
+            document.getElementById('status').textContent = '✅ WebXR AR Active! (6DOF) Pinch to place';
+            document.getElementById('ar-instructions').classList.add('active');
+            console.log('WebXR AR started successfully');
+            return;
+        }
+        // If WebXR fails, fall through to gyro mode
+        console.log('WebXR failed, falling back to gyro mode');
+    }
 
-    // Enumerate available cameras
+    // Fallback to gyroscope-based AR (3DOF only)
+    await requestOrientationPermission();
     await enumerateCameras();
 
-    // Initialize webcam with current facing mode
     const webcamOk = await initWebcam(currentFacingMode);
     if (!webcamOk) return;
 
-    // Show video
     document.getElementById('webcam').style.display = 'block';
 
-    // Start render loop
+    // Start render loop (non-XR)
     animate();
 
-    // Update UI
     document.getElementById('start-ar').style.display = 'none';
     document.getElementById('switch-camera').style.display = 'block';
-    document.getElementById('status').textContent = '✅ AR Active! Pinch to place cubes';
+    document.getElementById('status').textContent = '✅ AR Active! (3DOF) Pinch to place';
     document.getElementById('ar-instructions').classList.add('active');
 
-    console.log('AR started successfully');
+    console.log('Gyro-based AR started (3DOF only)');
 }
 
 // Switch camera - cycle through all available cameras
@@ -768,6 +839,96 @@ document.getElementById('clear-all').addEventListener('click', () => {
     }
 });
 
+// Check WebXR Support
+async function checkWebXRSupport() {
+    if (navigator.xr) {
+        try {
+            isWebXRSupported = await navigator.xr.isSessionSupported('immersive-ar');
+            console.log('WebXR immersive-ar supported:', isWebXRSupported);
+            updateDebug('orientation', isWebXRSupported ? 'WebXR (6DOF) ✓' : 'Gyro only (3DOF)');
+            return isWebXRSupported;
+        } catch (error) {
+            console.warn('WebXR check failed:', error);
+        }
+    }
+    console.log('WebXR not available');
+    updateDebug('orientation', 'Gyro only (3DOF)');
+    return false;
+}
+
+// Initialize WebXR Session
+async function startWebXRSession() {
+    try {
+        xrSession = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['hit-test'],
+            optionalFeatures: ['dom-overlay'],
+            domOverlay: { root: document.body }
+        });
+
+        console.log('WebXR session started');
+        updateDebug('orientation', 'WebXR Active (6DOF)');
+
+        // Setup XR reference space
+        xrRefSpace = await xrSession.requestReferenceSpace('local');
+
+        // Setup XR session with renderer
+        await renderer.xr.setSession(xrSession);
+
+        // Setup hit-test source for placing objects
+        const viewerSpace = await xrSession.requestReferenceSpace('viewer');
+        xrHitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+
+        // Handle session end
+        xrSession.addEventListener('end', () => {
+            console.log('WebXR session ended');
+            xrSession = null;
+            xrHitTestSource = null;
+            updateDebug('orientation', 'WebXR Ended');
+        });
+
+        // Use XR animation loop
+        renderer.setAnimationLoop(animateXR);
+
+        return true;
+    } catch (error) {
+        console.error('WebXR session failed:', error);
+        updateDebug('orientation', 'WebXR Failed');
+        return false;
+    }
+}
+
+// XR Animation Loop (for WebXR mode)
+function animateXR(time, frame) {
+    if (frame && xrSession) {
+        const pose = frame.getViewerPose(xrRefSpace);
+
+        if (pose) {
+            // Camera position is automatically updated by WebXR!
+            // This gives us 6DOF tracking
+
+            // Update hit test for placement
+            if (xrHitTestSource) {
+                const hitTestResults = frame.getHitTestResults(xrHitTestSource);
+                if (hitTestResults.length > 0) {
+                    const hit = hitTestResults[0];
+                    const hitPose = hit.getPose(xrRefSpace);
+
+                    if (hitPose && reticle) {
+                        reticle.visible = true;
+                        reticle.position.setFromMatrixPosition(hitPose.transform.matrix);
+                        reticlePosition.copy(reticle.position);
+                    }
+                }
+            }
+        }
+
+        // Cubes stay in world space automatically with WebXR
+        // No need to update anchors - WebXR handles this!
+
+        renderer.render(scene, camera);
+    }
+}
+
 // Initialize
 async function init() {
     console.log('=== AR Cube Builder (Universal) ===');
@@ -780,11 +941,23 @@ async function init() {
     }
 
     initThreeJS();
-    initOrientationTracking();
+
+    // Check for WebXR support
+    await checkWebXRSupport();
+
+    // Only init gyroscope if WebXR not supported
+    if (!isWebXRSupported) {
+        initOrientationTracking();
+    }
+
     await initDepthEstimation();
     await initHandTracking();
 
-    document.getElementById('status').textContent = '✅ Ready! Click Start AR';
+    if (isWebXRSupported) {
+        document.getElementById('status').textContent = '✅ Ready! WebXR AR Available (6DOF)';
+    } else {
+        document.getElementById('status').textContent = '✅ Ready! Gyro Mode (3DOF only)';
+    }
     console.log('Initialization complete');
 }
 
