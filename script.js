@@ -41,6 +41,8 @@ let handDetectionActive = false;
 let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
 let initialOrientation = null;
 let orientationPermission = false;
+let orientationSensor = null;
+let screenOrientation = 0;
 
 // Reticle for placement
 let reticle = null;
@@ -146,8 +148,56 @@ async function requestOrientationPermission() {
     }
 }
 
-// Initialize device orientation tracking
-function initOrientationTracking() {
+// Initialize device orientation tracking with quaternions
+async function initOrientationTracking() {
+    // Track screen orientation
+    if (window.screen && window.screen.orientation) {
+        screenOrientation = (window.screen.orientation.angle || 0) * Math.PI / 180;
+        window.screen.orientation.addEventListener('change', () => {
+            screenOrientation = (window.screen.orientation.angle || 0) * Math.PI / 180;
+            console.log('Screen orientation changed:', screenOrientation);
+        });
+    }
+
+    // Try to use AbsoluteOrientationSensor (modern, quaternion-based)
+    if ('AbsoluteOrientationSensor' in window) {
+        try {
+            const results = await Promise.all([
+                navigator.permissions.query({ name: 'accelerometer' }),
+                navigator.permissions.query({ name: 'magnetometer' }),
+                navigator.permissions.query({ name: 'gyroscope' })
+            ]);
+
+            if (results.every(result => result.state === 'granted')) {
+                orientationSensor = new AbsoluteOrientationSensor({ frequency: 60, referenceFrame: 'device' });
+
+                orientationSensor.addEventListener('reading', () => {
+                    updateCameraOrientationQuaternion();
+                });
+
+                orientationSensor.addEventListener('error', (event) => {
+                    console.warn('Orientation sensor error:', event.error);
+                    fallbackToDeviceOrientation();
+                });
+
+                orientationSensor.start();
+                console.log('AbsoluteOrientationSensor initialized');
+                updateDebug('orientation', 'Quaternion ✓');
+                return;
+            }
+        } catch (error) {
+            console.warn('AbsoluteOrientationSensor not available:', error);
+        }
+    }
+
+    // Fallback to DeviceOrientationEvent
+    fallbackToDeviceOrientation();
+}
+
+// Fallback to old DeviceOrientationEvent
+function fallbackToDeviceOrientation() {
+    console.log('Using DeviceOrientationEvent fallback');
+    updateDebug('orientation', 'Euler (fallback)');
     window.addEventListener('deviceorientation', (event) => {
         if (!orientationPermission) return;
 
@@ -159,14 +209,36 @@ function initOrientationTracking() {
             initialOrientation = { ...deviceOrientation };
         }
 
-        updateCameraOrientation();
+        updateCameraOrientationEuler();
     }, true);
-
-    console.log('Orientation tracking initialized');
 }
 
-// Update camera based on device orientation
-function updateCameraOrientation() {
+// Update camera using quaternions (from AbsoluteOrientationSensor)
+function updateCameraOrientationQuaternion() {
+    if (!orientationSensor || !orientationSensor.quaternion) return;
+
+    // Get device orientation as quaternion
+    const deviceQ = new THREE.Quaternion().fromArray(orientationSensor.quaternion);
+
+    // Apply correction for camera pointing backward (not upward)
+    const correctionQ = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(1, 0, 0),
+        -Math.PI / 2
+    );
+
+    // Apply screen orientation correction
+    const screenQ = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 0, 1),
+        -screenOrientation
+    );
+
+    // Combine: screen rotation -> device rotation -> camera correction
+    camera.quaternion.multiplyQuaternions(correctionQ, deviceQ);
+    camera.quaternion.multiply(screenQ);
+}
+
+// Update camera using Euler angles (fallback)
+function updateCameraOrientationEuler() {
     if (!initialOrientation) return;
 
     const alpha = THREE.MathUtils.degToRad(deviceOrientation.alpha - initialOrientation.alpha);
