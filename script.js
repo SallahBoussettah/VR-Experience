@@ -33,9 +33,9 @@ let depthEstimator = null;
 let currentDepthMap = null;
 let currentStream = null;
 let currentFacingMode = 'environment'; // 'environment' = back, 'user' = front
-let mediaCamera = null;
 let availableCameras = [];
 let currentCameraIndex = 0;
+let handDetectionActive = false;
 
 // Device orientation tracking
 let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
@@ -475,6 +475,23 @@ async function initHandTracking() {
     }
 }
 
+// Manual hand detection loop - sends video frames to MediaPipe
+async function startHandDetectionLoop() {
+    async function detectHands() {
+        if (handDetectionActive && videoElement && videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
+            try {
+                await hands.send({ image: videoElement });
+            } catch (error) {
+                console.warn('Hand detection error:', error);
+            }
+        }
+        if (handDetectionActive) {
+            requestAnimationFrame(detectHands);
+        }
+    }
+    detectHands();
+}
+
 // Enumerate available cameras
 async function enumerateCameras() {
     try {
@@ -496,12 +513,6 @@ async function initWebcam(facingMode = 'environment', deviceId = null) {
     updateDebug('camera', 'Initializing...');
 
     try {
-        // Stop existing MediaPipe camera
-        if (mediaCamera) {
-            mediaCamera.stop();
-            mediaCamera = null;
-        }
-
         // Stop existing stream if any
         if (currentStream) {
             currentStream.getTracks().forEach(track => track.stop());
@@ -572,22 +583,11 @@ async function initWebcam(facingMode = 'environment', deviceId = null) {
         updateDebug('camera', label.substring(0, 20));
         updateDebug('facing', settings.facingMode || 'unknown');
 
-        // Setup MediaPipe camera
-        if (hands) {
-            // Give a small delay to ensure video stream is fully ready
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            mediaCamera = new Camera(videoElement, {
-                onFrame: async () => {
-                    if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
-                        await hands.send({ image: videoElement });
-                    }
-                },
-                width: 1280,
-                height: 720
-            });
-            await mediaCamera.start();
-            console.log('MediaPipe camera started');
+        // Start hand detection loop (don't use MediaPipe Camera utility)
+        if (hands && !handDetectionActive) {
+            handDetectionActive = true;
+            startHandDetectionLoop();
+            console.log('Hand detection loop started');
         }
 
         console.log('Webcam initialized successfully');
