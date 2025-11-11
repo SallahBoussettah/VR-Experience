@@ -338,9 +338,17 @@ function findCubeAtScreenPosition(screenX, screenY) {
 }
 
 // Handle hand tracking
+let lastHandDetectionLog = 0;
 async function onHandResults(results) {
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         handLandmarks = results.multiHandLandmarks[0];
+
+        // Log hand detection periodically
+        const now = Date.now();
+        if (now - lastHandDetectionLog > 5000) {
+            console.log('Hand detected and tracking');
+            lastHandDetectionLog = now;
+        }
 
         isPinching = detectPinch(handLandmarks);
         isFist = detectFist(handLandmarks);
@@ -366,11 +374,14 @@ async function onHandResults(results) {
         // Spawn/move with pinch
         else if (isPinching) {
             if (!wasPinching) {
+                console.log('Pinch detected, checking for cube at position');
                 selectedCube = findCubeAtScreenPosition(screenX, screenY);
 
                 if (!selectedCube) {
+                    console.log('Creating new cube');
                     selectedCube = await createCube(screenX, screenY, handDepth);
                 } else {
+                    console.log('Selected existing cube');
                     const arCube = arCubes.find(ac => ac.mesh === selectedCube);
                     if (arCube) arCube.locked = false;
                 }
@@ -508,14 +519,19 @@ async function initWebcam(facingMode = 'environment') {
 
         // Setup MediaPipe camera
         if (hands) {
+            // Give a small delay to ensure video stream is fully ready
+            await new Promise(resolve => setTimeout(resolve, 100));
+
             mediaCamera = new Camera(videoElement, {
                 onFrame: async () => {
-                    await hands.send({ image: videoElement });
+                    if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
+                        await hands.send({ image: videoElement });
+                    }
                 },
                 width: 1280,
                 height: 720
             });
-            mediaCamera.start();
+            await mediaCamera.start();
             console.log('MediaPipe camera started');
         }
 
