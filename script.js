@@ -24,6 +24,7 @@ let depthEstimator = null;
 let currentDepthMap = null;
 let currentStream = null;
 let currentFacingMode = 'environment'; // 'environment' = back, 'user' = front
+let mediaCamera = null;
 
 // Device orientation tracking
 let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
@@ -442,39 +443,72 @@ async function initWebcam(facingMode = 'environment') {
     videoElement = document.getElementById('webcam');
 
     try {
+        // Stop existing MediaPipe camera
+        if (mediaCamera) {
+            mediaCamera.stop();
+            mediaCamera = null;
+        }
+
         // Stop existing stream if any
         if (currentStream) {
             currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
         }
 
         currentFacingMode = facingMode;
 
+        console.log(`Requesting camera with facingMode: ${facingMode}`);
+
         // Try to get camera with specified facing mode
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                facingMode: { exact: facingMode },
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            }
-        }).catch(async (err) => {
-            console.warn(`Exact ${facingMode} failed, trying ideal...`, err);
-            // Fallback if exact fails
-            return await navigator.mediaDevices.getUserMedia({
+        let stream = null;
+        try {
+            // Try exact constraint first
+            stream = await navigator.mediaDevices.getUserMedia({
                 video: {
-                    facingMode: facingMode,
-                    width: 1280,
-                    height: 720
+                    facingMode: { exact: facingMode },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 }
             });
-        });
+            console.log(`Got camera with exact facingMode: ${facingMode}`);
+        } catch (err) {
+            console.warn(`Exact ${facingMode} failed, trying ideal...`, err);
+            // Fallback if exact fails - try with ideal constraint
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: { ideal: facingMode },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                console.log(`Got camera with ideal facingMode: ${facingMode}`);
+            } catch (err2) {
+                console.warn(`Ideal ${facingMode} failed, trying without constraint...`, err2);
+                // Last resort - just get any camera
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                console.log('Got camera without facingMode constraint');
+            }
+        }
 
         currentStream = stream;
         videoElement.srcObject = stream;
-        videoElement.play();
+        await videoElement.play();
+
+        // Log which camera we actually got
+        const videoTrack = stream.getVideoTracks()[0];
+        const settings = videoTrack.getSettings();
+        console.log('Camera settings:', settings);
+        console.log('Actual facingMode:', settings.facingMode);
 
         // Setup MediaPipe camera
         if (hands) {
-            const mediaCamera = new Camera(videoElement, {
+            mediaCamera = new Camera(videoElement, {
                 onFrame: async () => {
                     await hands.send({ image: videoElement });
                 },
@@ -482,9 +516,10 @@ async function initWebcam(facingMode = 'environment') {
                 height: 720
             });
             mediaCamera.start();
+            console.log('MediaPipe camera started');
         }
 
-        console.log('Webcam initialized');
+        console.log('Webcam initialized successfully');
         return true;
     } catch (error) {
         console.error('Webcam error:', error);
@@ -522,14 +557,25 @@ async function startAR() {
 // Switch camera
 async function switchCamera() {
     const newFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-    console.log('Switching camera to:', newFacingMode);
+    console.log('Switching camera from', currentFacingMode, 'to:', newFacingMode);
 
     document.getElementById('status').textContent = 'Switching camera...';
 
     await initWebcam(newFacingMode);
 
-    const cameraName = newFacingMode === 'environment' ? 'Back' : 'Front';
-    document.getElementById('status').textContent = `✅ ${cameraName} Camera Active!`;
+    // Check which camera we actually got
+    if (currentStream) {
+        const videoTrack = currentStream.getVideoTracks()[0];
+        const settings = videoTrack.getSettings();
+        const actualFacingMode = settings.facingMode || 'unknown';
+
+        console.log('After switch - requested:', newFacingMode, 'actual:', actualFacingMode);
+
+        const cameraName = actualFacingMode === 'environment' ? 'Back' :
+                          actualFacingMode === 'user' ? 'Front' :
+                          (newFacingMode === 'environment' ? 'Back' : 'Front');
+        document.getElementById('status').textContent = `✅ ${cameraName} Camera Active!`;
+    }
 }
 
 // Animation loop
