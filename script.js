@@ -24,6 +24,7 @@ let selectedCube = null;
 let xrSession = null;
 let xrRefSpace = null;
 let xrHitTestSource = null;
+let xrHitTestSourceRequested = false;
 let isWebXRSupported = false;
 
 // Hand tracking
@@ -507,6 +508,11 @@ function findCubeAtScreenPosition(screenX, screenY) {
 // Handle hand tracking
 let lastHandDetectionLog = 0;
 async function onHandResults(results) {
+    // Don't process hand tracking when in WebXR mode
+    if (xrSession) {
+        return;
+    }
+
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         handLandmarks = results.multiHandLandmarks[0];
 
@@ -733,13 +739,21 @@ async function startAR() {
         if (webxrStarted) {
             document.getElementById('start-ar').style.display = 'none';
             document.getElementById('switch-camera').style.display = 'none';  // No manual camera switch in WebXR
-            document.getElementById('status').textContent = '✅ WebXR AR Active! (6DOF) Pinch to place';
+            document.getElementById('status').textContent = '✅ WebXR AR! Tap screen to place';
+            document.getElementById('ar-instructions').innerHTML = `
+                <p><strong>WebXR Mode (6DOF):</strong></p>
+                <p>• Move your phone to scan surfaces</p>
+                <p>• Green reticle appears on detected surfaces</p>
+                <p>• Tap screen to place cube</p>
+                <p>• Walk around cubes in 3D space!</p>
+            `;
             document.getElementById('ar-instructions').classList.add('active');
             console.log('WebXR AR started successfully');
             return;
         }
         // If WebXR fails, fall through to gyro mode
         console.log('WebXR failed, falling back to gyro mode');
+        updateDebug('orientation', 'Fallback to Gyro');
     }
 
     // Fallback to gyroscope-based AR (3DOF only)
@@ -859,10 +873,9 @@ async function checkWebXRSupport() {
 // Initialize WebXR Session
 async function startWebXRSession() {
     try {
+        // Don't require dom-overlay as it might not be supported
         xrSession = await navigator.xr.requestSession('immersive-ar', {
-            requiredFeatures: ['hit-test'],
-            optionalFeatures: ['dom-overlay'],
-            domOverlay: { root: document.body }
+            requiredFeatures: ['hit-test']
         });
 
         console.log('WebXR session started');
@@ -871,20 +884,20 @@ async function startWebXRSession() {
         // Setup XR reference space
         xrRefSpace = await xrSession.requestReferenceSpace('local');
 
-        // Setup XR session with renderer
-        await renderer.xr.setSession(xrSession);
-
-        // Setup hit-test source for placing objects
-        const viewerSpace = await xrSession.requestReferenceSpace('viewer');
-        xrHitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+        // Handle select event (tap to place)
+        xrSession.addEventListener('select', onXRSelect);
 
         // Handle session end
         xrSession.addEventListener('end', () => {
             console.log('WebXR session ended');
             xrSession = null;
             xrHitTestSource = null;
+            xrRefSpace = null;
             updateDebug('orientation', 'WebXR Ended');
         });
+
+        // Setup XR session with renderer
+        await renderer.xr.setSession(xrSession);
 
         // Use XR animation loop
         renderer.setAnimationLoop(animateXR);
@@ -892,33 +905,59 @@ async function startWebXRSession() {
         return true;
     } catch (error) {
         console.error('WebXR session failed:', error);
-        updateDebug('orientation', 'WebXR Failed');
+        console.error('Error details:', error.message);
+        updateDebug('orientation', 'WebXR Failed: ' + error.message);
         return false;
+    }
+}
+
+// Handle XR select (tap to place cube)
+function onXRSelect() {
+    if (reticle.visible) {
+        // Place cube at reticle position
+        const position = new THREE.Vector3();
+        position.setFromMatrixPosition(reticle.matrix);
+        createCubeAt(position);
+        updateDebug('cubes', arCubes.length);
     }
 }
 
 // XR Animation Loop (for WebXR mode)
 function animateXR(time, frame) {
-    if (frame && xrSession) {
-        const pose = frame.getViewerPose(xrRefSpace);
+    if (frame) {
+        const session = frame.session;
 
-        if (pose) {
-            // Camera position is automatically updated by WebXR!
-            // This gives us 6DOF tracking
+        // Request hit test source once
+        if (xrHitTestSourceRequested === false) {
+            session.requestReferenceSpace('viewer').then((referenceSpace) => {
+                session.requestHitTestSource({ space: referenceSpace }).then((source) => {
+                    xrHitTestSource = source;
+                    console.log('Hit test source created');
+                });
+            });
+            session.addEventListener('end', () => {
+                xrHitTestSourceRequested = false;
+                xrHitTestSource = null;
+            });
+            xrHitTestSourceRequested = true;
+        }
 
-            // Update hit test for placement
-            if (xrHitTestSource) {
-                const hitTestResults = frame.getHitTestResults(xrHitTestSource);
-                if (hitTestResults.length > 0) {
-                    const hit = hitTestResults[0];
-                    const hitPose = hit.getPose(xrRefSpace);
+        // Update hit test and reticle
+        if (xrHitTestSource) {
+            const hitTestResults = frame.getHitTestResults(xrHitTestSource);
+            if (hitTestResults.length > 0) {
+                const hit = hitTestResults[0];
+                const pose = hit.getPose(xrRefSpace);
 
-                    if (hitPose && reticle) {
-                        reticle.visible = true;
-                        reticle.position.setFromMatrixPosition(hitPose.transform.matrix);
-                        reticlePosition.copy(reticle.position);
-                    }
+                if (pose) {
+                    reticle.visible = true;
+                    reticle.matrix.fromArray(pose.transform.matrix);
+                    reticlePosition.setFromMatrixPosition(reticle.matrix);
+                } else {
+                    reticle.visible = false;
                 }
+            } else {
+                reticle.visible = false;
             }
         }
 
