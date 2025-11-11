@@ -72,17 +72,26 @@ function initThreeJS() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    // Lighting - improved for better depth perception
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(5, 10, 5);
     directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 1024;
+    directionalLight.shadow.mapSize.height = 1024;
     scene.add(directionalLight);
+
+    // Add hemisphere light for better depth perception
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+    scene.add(hemiLight);
 
     // Create reticle
     createReticle();
+
+    // Add reference grid (optional, helps with depth perception)
+    createReferenceGrid();
 
     window.addEventListener('resize', onWindowResize);
 
@@ -97,11 +106,11 @@ function onWindowResize() {
 
 // Create reticle for placement indicator
 function createReticle() {
-    const geometry = new THREE.RingGeometry(0.15, 0.2, 32);
+    const geometry = new THREE.RingGeometry(0.05, 0.08, 32);
     const material = new THREE.MeshBasicMaterial({
-        color: 0x4CAF50,
+        color: 0x00ff00,
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.9,
         side: THREE.DoubleSide
     });
 
@@ -109,6 +118,15 @@ function createReticle() {
     reticle.rotation.x = -Math.PI / 2;
     reticle.position.copy(reticlePosition);
     scene.add(reticle);
+}
+
+// Create reference grid for depth perception
+function createReferenceGrid() {
+    const gridHelper = new THREE.GridHelper(5, 20, 0x00ff00, 0x00ff00);
+    gridHelper.material.transparent = true;
+    gridHelper.material.opacity = 0.2;
+    gridHelper.position.y = -1;  // 1 meter below camera
+    scene.add(gridHelper);
 }
 
 // Request device orientation permission
@@ -220,20 +238,29 @@ function screenToWorld(screenX, screenY, depth) {
 
 // Create cube
 async function createCube(screenX, screenY, handDepth) {
-    const cubeSize = 0.15;  // 15cm cubes - easier to see
+    const cubeSize = 0.1;  // 10cm cubes
     const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const color = Math.random() * 0xffffff;
     const material = new THREE.MeshStandardMaterial({
-        color: Math.random() * 0xffffff,
-        roughness: 0.4,
-        metalness: 0.2
+        color: color,
+        roughness: 0.3,
+        metalness: 0.3,
+        emissive: color,
+        emissiveIntensity: 0.2  // Slight glow for better visibility
     });
 
     const cube = new THREE.Mesh(geometry, material);
     cube.castShadow = true;
     cube.receiveShadow = true;
 
-    // Use a fixed reasonable depth (1 meter in front of camera)
-    const depth = 1.0;
+    // Add edge lines for better depth perception
+    const edges = new THREE.EdgesGeometry(geometry);
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+    const wireframe = new THREE.LineSegments(edges, lineMaterial);
+    cube.add(wireframe);
+
+    // Use a fixed reasonable depth (1.2 meters in front of camera)
+    const depth = 1.2;
 
     // Calculate world position
     const worldPos = screenToWorld(screenX, screenY, depth);
@@ -245,15 +272,25 @@ async function createCube(screenX, screenY, handDepth) {
 
     scene.add(cube);
 
+    // Store camera-relative position for proper AR anchoring
+    const cameraRelativePos = new THREE.Vector3();
+    cameraRelativePos.copy(cube.position).sub(camera.position);
+
+    // Store in camera's local space (compensates for camera rotation)
+    const localPos = cameraRelativePos.clone();
+    camera.worldToLocal(localPos);
+
     const arCube = {
         mesh: cube,
+        localPosition: localPos,  // Position in camera's local space
         worldPosition: cube.position.clone(),
         depth: depth,
-        locked: true  // Lock immediately so it stays in place
+        initialCameraRotation: camera.rotation.clone(),
+        locked: true
     };
 
     arCubes.push(arCube);
-    console.log('Cube placed at:', cube.position, 'World pos:', worldPos);
+    console.log('Cube placed at:', cube.position, 'Local:', localPos);
 
     return cube;
 }
@@ -285,12 +322,15 @@ function clearAllCubes() {
     updateDebug('cubes', 0);
 }
 
-// Update AR anchors - keep cubes at their locked world positions
+// Update AR anchors - transform cubes from camera-local to world space
 function updateARAnchors() {
     arCubes.forEach(arCube => {
-        if (arCube.locked) {
-            // Keep cube at its fixed world position
-            arCube.mesh.position.copy(arCube.worldPosition);
+        if (arCube.locked && arCube.localPosition) {
+            // Convert from camera's local space to world space
+            const worldPos = arCube.localPosition.clone();
+            camera.localToWorld(worldPos);
+
+            arCube.mesh.position.copy(worldPos);
         }
     });
 }
@@ -370,10 +410,11 @@ async function onHandResults(results) {
         const screenY = indexTip.y;
         const handDepth = indexTip.z;
 
-        // Update reticle position
-        const depth = await getDepthAtPoint(screenX, screenY) || 2.0;
+        // Update reticle position to show where cube will be placed
+        const depth = 1.2;  // Match cube placement depth
         reticlePosition = screenToWorld(screenX, screenY, depth);
         reticle.position.copy(reticlePosition);
+        reticle.visible = true;
 
         // Delete with fist
         if (isFist) {
