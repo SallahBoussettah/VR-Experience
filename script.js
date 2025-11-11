@@ -1,20 +1,15 @@
 // ========================================
-// PREMIUM AR CUBE BUILDER with WebXR
-// True AR with plane detection, hit testing, and perfect anchoring
+// AR CUBE BUILDER - Universal Compatibility Version
+// Works on ALL devices with camera (no WebXR required)
+// Uses: Webcam + Depth Estimation + Gyroscope
 // ========================================
 
-// Three.js + WebXR Setup
+// Three.js Setup
 let scene, camera, renderer;
-let xrSession = null;
-let xrRefSpace = null;
-let hitTestSource = null;
-let hitTestSourceRequested = false;
-
-// AR elements
-let reticle; // Visual indicator for surface detection
-let arCubes = []; // Cubes with AR anchors
+let arCubes = [];
 let gridSize = 0.5;
 let gridSnapEnabled = true;
+let selectedCube = null;
 
 // Hand tracking
 let hands = null;
@@ -22,68 +17,22 @@ let handLandmarks = null;
 let isPinching = false;
 let wasPinching = false;
 let isFist = false;
-let selectedCube = null;
 
-// Controllers
-let controller;
+// Video and depth
+let videoElement = null;
+let depthEstimator = null;
+let currentDepthMap = null;
 
-// Check WebXR support with detailed logging
-async function checkARSupport() {
-    const statusEl = document.getElementById('status');
+// Device orientation tracking
+let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
+let initialOrientation = null;
+let orientationPermission = false;
 
-    console.log('Checking AR support...');
-    console.log('User Agent:', navigator.userAgent);
-    console.log('HTTPS:', window.location.protocol === 'https:');
-    console.log('navigator.xr exists:', !!navigator.xr);
+// Reticle for placement
+let reticle = null;
+let reticlePosition = new THREE.Vector3(0, 0, -2);
 
-    if (!navigator.xr) {
-        const message = '❌ WebXR not available. Need HTTPS or compatible browser.';
-        statusEl.textContent = message;
-        statusEl.style.background = 'rgba(244, 67, 54, 0.2)';
-        statusEl.style.borderColor = '#f44336';
-        console.error(message);
-        showInstructions();
-        return false;
-    }
-
-    try {
-        const supported = await navigator.xr.isSessionSupported('immersive-ar');
-        console.log('immersive-ar supported:', supported);
-
-        if (supported) {
-            statusEl.textContent = '✅ AR Ready! Click Start AR';
-            statusEl.style.background = 'rgba(76, 175, 80, 0.2)';
-            statusEl.style.borderColor = '#4CAF50';
-            return true;
-        } else {
-            statusEl.textContent = '❌ AR not available on this device';
-            statusEl.style.background = 'rgba(244, 67, 54, 0.2)';
-            statusEl.style.borderColor = '#f44336';
-            showInstructions();
-            return false;
-        }
-    } catch (error) {
-        console.error('Error checking AR support:', error);
-        statusEl.textContent = '❌ Error checking AR support';
-        statusEl.style.background = 'rgba(244, 67, 54, 0.2)';
-        statusEl.style.borderColor = '#f44336';
-        showInstructions();
-        return false;
-    }
-}
-
-function showInstructions() {
-    const statusEl = document.getElementById('status');
-    statusEl.innerHTML = `
-        <strong>⚠️ WebXR Not Available</strong><br>
-        <small>Requirements:</small><br>
-        <small>• HTTPS connection (not http://)</small><br>
-        <small>• Android Chrome or iOS Safari</small><br>
-        <small>• AR-capable device</small>
-    `;
-}
-
-// Initialize Three.js for WebXR
+// Initialize Three.js
 function initThreeJS() {
     const canvas = document.getElementById('canvas');
 
@@ -92,13 +41,14 @@ function initThreeJS() {
 
     // Camera
     camera = new THREE.PerspectiveCamera(
-        70,
+        75,
         window.innerWidth / window.innerHeight,
         0.01,
-        20
+        100
     );
+    camera.position.set(0, 0, 0);
 
-    // Renderer with WebXR
+    // Renderer
     renderer = new THREE.WebGLRenderer({
         canvas: canvas,
         alpha: true,
@@ -106,27 +56,23 @@ function initThreeJS() {
     });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
+    renderer.shadowMap.enabled = true;
 
     // Lighting
-    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    light.position.set(0.5, 1, 0.25);
-    scene.add(light);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(0, 5, 0);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    directionalLight.position.set(5, 10, 5);
     directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
 
-    // Create reticle (surface indicator)
+    // Create reticle
     createReticle();
 
-    // Handle window resize
     window.addEventListener('resize', onWindowResize);
 
-    console.log('Three.js initialized for WebXR');
+    console.log('Three.js initialized');
 }
 
 function onWindowResize() {
@@ -135,91 +81,135 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-// Create reticle for surface targeting
+// Create reticle for placement indicator
 function createReticle() {
-    const geometry = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
+    const geometry = new THREE.RingGeometry(0.15, 0.2, 32);
     const material = new THREE.MeshBasicMaterial({
         color: 0x4CAF50,
         transparent: true,
-        opacity: 0.7
+        opacity: 0.8,
+        side: THREE.DoubleSide
     });
 
     reticle = new THREE.Mesh(geometry, material);
-    reticle.matrixAutoUpdate = false;
-    reticle.visible = false;
+    reticle.rotation.x = -Math.PI / 2;
+    reticle.position.copy(reticlePosition);
     scene.add(reticle);
 }
 
-// Start AR session
-async function startAR() {
-    console.log('Starting AR session...');
-
-    const sessionInit = {
-        requiredFeatures: ['hit-test'],
-        optionalFeatures: ['dom-overlay', 'anchors', 'plane-detection']
-    };
-
-    // Add DOM overlay if element exists
-    const arContainer = document.getElementById('ar-container');
-    if (arContainer) {
-        sessionInit.domOverlay = { root: arContainer };
+// Request device orientation permission
+async function requestOrientationPermission() {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            orientationPermission = permission === 'granted';
+            console.log('Orientation permission:', permission);
+        } catch (error) {
+            console.warn('Orientation permission error:', error);
+            orientationPermission = true; // Try anyway
+        }
+    } else {
+        orientationPermission = true; // Not iOS, assume granted
     }
+}
 
-    try {
-        xrSession = await navigator.xr.requestSession('immersive-ar', sessionInit);
-        console.log('XR session created');
+// Initialize device orientation tracking
+function initOrientationTracking() {
+    window.addEventListener('deviceorientation', (event) => {
+        if (!orientationPermission) return;
 
-        await renderer.xr.setSession(xrSession);
-        console.log('Renderer set to XR session');
+        deviceOrientation.alpha = event.alpha || 0;
+        deviceOrientation.beta = event.beta || 0;
+        deviceOrientation.gamma = event.gamma || 0;
 
-        xrRefSpace = await xrSession.requestReferenceSpace('local');
-        console.log('Reference space created');
-
-        // Setup controller for touch input
-        controller = renderer.xr.getController(0);
-        controller.addEventListener('select', onSelect);
-        scene.add(controller);
-
-        // Update UI
-        document.getElementById('start-ar').style.display = 'none';
-        document.getElementById('ar-instructions').classList.add('active');
-        document.getElementById('status').textContent = '✅ AR Active!';
-
-        // Start render loop
-        renderer.setAnimationLoop(render);
-
-        console.log('AR session started successfully');
-    } catch (error) {
-        console.error('Failed to start AR:', error);
-
-        let errorMessage = 'Could not start AR. ';
-
-        if (error.message.includes('insecure')) {
-            errorMessage += 'Needs HTTPS connection.';
-        } else if (error.message.includes('NotSupportedError')) {
-            errorMessage += 'Device or browser doesn\'t support WebXR.';
-        } else {
-            errorMessage += error.message;
+        if (!initialOrientation) {
+            initialOrientation = { ...deviceOrientation };
         }
 
-        alert(errorMessage);
-        document.getElementById('status').textContent = '❌ ' + errorMessage;
+        updateCameraOrientation();
+    }, true);
+
+    console.log('Orientation tracking initialized');
+}
+
+// Update camera based on device orientation
+function updateCameraOrientation() {
+    if (!initialOrientation) return;
+
+    const alpha = THREE.MathUtils.degToRad(deviceOrientation.alpha - initialOrientation.alpha);
+    const beta = THREE.MathUtils.degToRad(deviceOrientation.beta);
+    const gamma = THREE.MathUtils.degToRad(deviceOrientation.gamma);
+
+    camera.rotation.set(beta - Math.PI/2, alpha, -gamma, 'YXZ');
+}
+
+// Initialize depth estimation
+async function initDepthEstimation() {
+    try {
+        console.log('Loading depth model...');
+        const model = depthEstimation.SupportedModels.ARPortraitDepth;
+        depthEstimator = await depthEstimation.createEstimator(model);
+        console.log('Depth model loaded');
+        return true;
+    } catch (error) {
+        console.warn('Depth estimation unavailable:', error);
+        return false;
     }
 }
 
-// Handle touch/tap to place cubes
-function onSelect() {
-    if (reticle.visible) {
-        placeCube(reticle.matrix);
+// Get depth at point
+async function getDepthAtPoint(x, y) {
+    if (!currentDepthMap || !depthEstimator) return 2.0; // Default depth
+
+    try {
+        const depthArray = await currentDepthMap.toArray();
+        const pixelX = Math.floor(x * depthArray[0].length);
+        const pixelY = Math.floor(y * depthArray.length);
+
+        const clampedX = Math.max(0, Math.min(pixelX, depthArray[0].length - 1));
+        const clampedY = Math.max(0, Math.min(pixelY, depthArray.length - 1));
+
+        const depth = depthArray[clampedY][clampedX];
+        return 0.5 + (depth * 4.5); // Normalize to meters
+    } catch (error) {
+        return 2.0;
     }
 }
 
-// Create cube at reticle position
-function placeCube(matrix) {
+// Update depth map
+async function updateDepthMap() {
+    if (!depthEstimator || !videoElement) return;
+
+    try {
+        currentDepthMap = await depthEstimator.estimateDepth(videoElement);
+    } catch (error) {
+        console.warn('Depth update error:', error);
+    }
+}
+
+// Convert screen position to 3D world
+function screenToWorld(screenX, screenY, depth) {
+    screenX = 1 - screenX; // Mirror
+
+    const ndcX = (screenX * 2) - 1;
+    const ndcY = -(screenY * 2) + 1;
+
+    const vector = new THREE.Vector3(ndcX, ndcY, -1);
+    vector.unproject(camera);
+
+    const dir = vector.sub(camera.position).normalize();
+    const position = camera.position.clone().add(dir.multiplyScalar(depth));
+
+    return position;
+}
+
+// Create cube
+async function createCube(screenX, screenY, handDepth) {
     const geometry = new THREE.BoxGeometry(gridSize, gridSize, gridSize);
     const material = new THREE.MeshStandardMaterial({
         color: Math.random() * 0xffffff,
-        roughness: 0.3,
+        roughness: 0.4,
         metalness: 0.2
     });
 
@@ -227,11 +217,15 @@ function placeCube(matrix) {
     cube.castShadow = true;
     cube.receiveShadow = true;
 
-    // Apply reticle's matrix (position on detected surface)
-    cube.applyMatrix4(matrix);
+    // Get depth
+    let depth = await getDepthAtPoint(screenX, screenY);
+    if (isNaN(depth) || depth === null) {
+        depth = 1.0 + (1 - handDepth) * 2.5;
+    }
 
-    // Offset Y to sit on surface
-    cube.position.y += gridSize / 2;
+    // Calculate world position
+    const worldPos = screenToWorld(screenX, screenY, depth);
+    cube.position.copy(worldPos);
 
     if (gridSnapEnabled) {
         snapToGrid(cube);
@@ -239,39 +233,23 @@ function placeCube(matrix) {
 
     scene.add(cube);
 
-    // Store AR anchor data
+    // Store with camera-relative transform
+    const cameraRelativePos = worldPos.clone().sub(camera.position);
+    const cameraRotation = camera.quaternion.clone();
+
     const arCube = {
         mesh: cube,
-        anchor: null,
-        position: cube.position.clone()
+        worldPosition: cube.position.clone(),
+        cameraRelativePosition: cameraRelativePos,
+        cameraRotation: cameraRotation.clone(),
+        depth: depth,
+        locked: false
     };
 
     arCubes.push(arCube);
-
-    // Try to create WebXR anchor
-    createAnchor(arCube, cube.position);
-
     console.log('Cube placed at:', cube.position);
-}
 
-// Create WebXR anchor for persistent AR
-async function createAnchor(arCube, position) {
-    if (!xrRefSpace || !xrSession) return;
-
-    try {
-        const anchorPose = new XRRigidTransform(
-            { x: position.x, y: position.y, z: position.z },
-            { x: 0, y: 0, z: 0, w: 1 }
-        );
-
-        if (xrSession.createAnchor) {
-            const anchor = await xrSession.createAnchor(anchorPose, xrRefSpace);
-            arCube.anchor = anchor;
-            console.log('AR anchor created');
-        }
-    } catch (error) {
-        console.warn('Could not create anchor:', error);
-    }
+    return cube;
 }
 
 function snapToGrid(cube) {
@@ -282,15 +260,10 @@ function snapToGrid(cube) {
 
 function deleteCube(cube) {
     scene.remove(cube);
-
     const index = arCubes.findIndex(ac => ac.mesh === cube);
     if (index > -1) {
-        if (arCubes[index].anchor) {
-            arCubes[index].anchor.delete();
-        }
         arCubes.splice(index, 1);
     }
-
     cube.geometry.dispose();
     cube.material.dispose();
 }
@@ -298,80 +271,146 @@ function deleteCube(cube) {
 function clearAllCubes() {
     arCubes.forEach(arCube => {
         scene.remove(arCube.mesh);
-        if (arCube.anchor) {
-            arCube.anchor.delete();
-        }
         arCube.mesh.geometry.dispose();
         arCube.mesh.material.dispose();
     });
     arCubes = [];
 }
 
-// Update AR anchors each frame
-function updateAnchors(frame) {
-    if (!frame) return;
-
+// Update AR anchors
+function updateARAnchors() {
     arCubes.forEach(arCube => {
-        if (arCube.anchor) {
-            const anchorPose = frame.getPose(arCube.anchor.anchorSpace, xrRefSpace);
+        if (arCube.locked) {
+            // Transform camera-relative to world space
+            const worldPos = arCube.cameraRelativePosition.clone();
+            worldPos.applyQuaternion(camera.quaternion);
+            worldPos.add(camera.position);
 
-            if (anchorPose) {
-                arCube.mesh.matrix.fromArray(anchorPose.transform.matrix);
-                arCube.mesh.matrixAutoUpdate = false;
-            }
+            arCube.mesh.position.copy(worldPos);
+            arCube.worldPosition.copy(worldPos);
         }
     });
 }
 
-// Main render loop
-function render(timestamp, frame) {
-    if (frame) {
-        // Update hit test for surface detection
-        if (!hitTestSourceRequested) {
-            requestHitTestSource();
-        }
+// Detect pinch
+function detectPinch(landmarks) {
+    const thumb = landmarks[4];
+    const index = landmarks[8];
+    const dx = thumb.x - index.x;
+    const dy = thumb.y - index.y;
+    const dz = thumb.z - index.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz) < 0.05;
+}
 
-        if (hitTestSource) {
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
+// Detect fist
+function detectFist(landmarks) {
+    const palm = landmarks[0];
+    const fingertips = [4, 8, 12, 16, 20];
+    let closeCount = 0;
 
-            if (hitTestResults.length > 0) {
-                const hit = hitTestResults[0];
-                const pose = hit.getPose(xrRefSpace);
+    fingertips.forEach(tipIndex => {
+        const tip = landmarks[tipIndex];
+        const dx = tip.x - palm.x;
+        const dy = tip.y - palm.y;
+        const dz = tip.z - palm.z;
+        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 0.15) closeCount++;
+    });
 
-                // Show reticle on detected surface
-                reticle.visible = true;
-                reticle.matrix.fromArray(pose.transform.matrix);
-            } else {
-                reticle.visible = false;
+    return closeCount >= 4;
+}
+
+// Find cube at screen position
+function findCubeAtScreenPosition(screenX, screenY) {
+    screenX = 1 - screenX;
+    const ndcX = (screenX * 2) - 1;
+    const ndcY = -(screenY * 2) + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+
+    const meshes = arCubes.map(ac => ac.mesh);
+    const intersects = raycaster.intersectObjects(meshes);
+
+    return intersects.length > 0 ? intersects[0].object : null;
+}
+
+// Handle hand tracking
+async function onHandResults(results) {
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        handLandmarks = results.multiHandLandmarks[0];
+
+        isPinching = detectPinch(handLandmarks);
+        isFist = detectFist(handLandmarks);
+
+        const indexTip = handLandmarks[8];
+        const screenX = indexTip.x;
+        const screenY = indexTip.y;
+        const handDepth = indexTip.z;
+
+        // Update reticle position
+        const depth = await getDepthAtPoint(screenX, screenY) || 2.0;
+        reticlePosition = screenToWorld(screenX, screenY, depth);
+        reticle.position.copy(reticlePosition);
+
+        // Delete with fist
+        if (isFist) {
+            const cubeToDelete = findCubeAtScreenPosition(screenX, screenY);
+            if (cubeToDelete) {
+                deleteCube(cubeToDelete);
+                selectedCube = null;
             }
         }
+        // Spawn/move with pinch
+        else if (isPinching) {
+            if (!wasPinching) {
+                selectedCube = findCubeAtScreenPosition(screenX, screenY);
 
-        // Update AR anchors
-        updateAnchors(frame);
+                if (!selectedCube) {
+                    selectedCube = await createCube(screenX, screenY, handDepth);
+                } else {
+                    const arCube = arCubes.find(ac => ac.mesh === selectedCube);
+                    if (arCube) arCube.locked = false;
+                }
+            } else if (selectedCube) {
+                const arCube = arCubes.find(ac => ac.mesh === selectedCube);
+                if (arCube) {
+                    const worldPos = screenToWorld(screenX, screenY, arCube.depth);
+                    arCube.mesh.position.copy(worldPos);
+
+                    if (gridSnapEnabled) {
+                        snapToGrid(arCube.mesh);
+                    }
+
+                    arCube.worldPosition.copy(arCube.mesh.position);
+                    arCube.cameraRelativePosition = worldPos.clone().sub(camera.position);
+                }
+            }
+        } else {
+            // Released pinch - lock cube
+            if (wasPinching && selectedCube) {
+                const arCube = arCubes.find(ac => ac.mesh === selectedCube);
+                if (arCube) {
+                    if (gridSnapEnabled) {
+                        snapToGrid(arCube.mesh);
+                    }
+                    arCube.worldPosition.copy(arCube.mesh.position);
+                    arCube.cameraRelativePosition = arCube.worldPosition.clone().sub(camera.position);
+                    arCube.cameraRotation = camera.quaternion.clone();
+                    arCube.locked = true;
+                }
+            }
+            selectedCube = null;
+        }
+
+        wasPinching = isPinching;
     }
-
-    renderer.render(scene, camera);
 }
 
-// Request hit test source for surface detection
-async function requestHitTestSource() {
-    if (!xrSession) return;
-
-    try {
-        const viewerSpace = await xrSession.requestReferenceSpace('viewer');
-        hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
-        hitTestSourceRequested = true;
-        console.log('Hit test source ready - surface detection active');
-    } catch (error) {
-        console.warn('Hit test not available:', error);
-    }
-}
-
-// Initialize MediaPipe hand tracking (optional)
+// Initialize hand tracking
 async function initHandTracking() {
     try {
         if (typeof Hands === 'undefined') {
-            console.warn('MediaPipe Hands not loaded');
+            console.warn('MediaPipe not loaded');
             return;
         }
 
@@ -392,63 +431,91 @@ async function initHandTracking() {
 
         console.log('Hand tracking initialized');
     } catch (error) {
-        console.warn('Hand tracking setup failed:', error);
+        console.warn('Hand tracking error:', error);
     }
 }
 
-// Detect pinch gesture
-function detectPinch(landmarks) {
-    const thumb = landmarks[4];
-    const index = landmarks[8];
+// Initialize webcam
+async function initWebcam() {
+    videoElement = document.getElementById('webcam');
 
-    const dx = thumb.x - index.x;
-    const dy = thumb.y - index.y;
-    const dz = thumb.z - index.z;
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: 1280, height: 720 }
+        });
 
-    return Math.sqrt(dx * dx + dy * dy + dz * dz) < 0.05;
+        videoElement.srcObject = stream;
+        videoElement.play();
+
+        // Setup MediaPipe camera
+        if (hands) {
+            const mediaCamera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 1280,
+                height: 720
+            });
+            mediaCamera.start();
+        }
+
+        console.log('Webcam initialized');
+        return true;
+    } catch (error) {
+        console.error('Webcam error:', error);
+        alert('Camera permission required!');
+        return false;
+    }
 }
 
-// Detect fist
-function detectFist(landmarks) {
-    const palm = landmarks[0];
-    const fingertips = [4, 8, 12, 16, 20];
+// Start AR
+async function startAR() {
+    document.getElementById('status').textContent = 'Starting AR...';
 
-    let closeCount = 0;
+    // Request orientation permission
+    await requestOrientationPermission();
 
-    fingertips.forEach(tipIndex => {
-        const tip = landmarks[tipIndex];
-        const dx = tip.x - palm.x;
-        const dy = tip.y - palm.y;
-        const dz = tip.z - palm.z;
+    // Initialize webcam
+    const webcamOk = await initWebcam();
+    if (!webcamOk) return;
 
-        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 0.15) {
-            closeCount++;
+    // Show video
+    document.getElementById('webcam').style.display = 'block';
+
+    // Start render loop
+    animate();
+
+    // Update UI
+    document.getElementById('start-ar').style.display = 'none';
+    document.getElementById('status').textContent = '✅ AR Active! Pinch to place cubes';
+    document.getElementById('ar-instructions').classList.add('active');
+
+    console.log('AR started successfully');
+}
+
+// Animation loop
+let lastDepthUpdate = 0;
+function animate() {
+    requestAnimationFrame(animate);
+
+    const now = Date.now();
+    if (now - lastDepthUpdate > 100) {
+        updateDepthMap();
+        lastDepthUpdate = now;
+    }
+
+    updateARAnchors();
+
+    // Highlight selected cube
+    arCubes.forEach(arCube => {
+        if (arCube.mesh === selectedCube) {
+            arCube.mesh.material.emissive = new THREE.Color(0x444444);
+        } else {
+            arCube.mesh.material.emissive = new THREE.Color(0x000000);
         }
     });
 
-    return closeCount >= 4;
-}
-
-// Handle hand tracking results
-function onHandResults(results) {
-    if (!xrSession) return;
-
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        handLandmarks = results.multiHandLandmarks[0];
-
-        isPinching = detectPinch(handLandmarks);
-        isFist = detectFist(handLandmarks);
-
-        if (isPinching && !wasPinching && reticle.visible) {
-            placeCube(reticle.matrix);
-        }
-
-        if (isFist && arCubes.length > 0) {
-            deleteCube(arCubes[arCubes.length - 1].mesh);
-        }
-
-        wasPinching = isPinching;
-    }
+    renderer.render(scene, camera);
 }
 
 // UI Event Listeners
@@ -468,40 +535,22 @@ document.getElementById('clear-all').addEventListener('click', () => {
 
 // Initialize
 async function init() {
-    console.log('=== Initializing Premium AR Cube Builder ===');
-    console.log('Location:', window.location.href);
-    console.log('Protocol:', window.location.protocol);
+    console.log('=== AR Cube Builder (Universal) ===');
+    console.log('Device:', navigator.userAgent);
 
-    // Wait for Three.js to load
     if (typeof THREE === 'undefined') {
-        console.error('THREE.js not loaded!');
-        document.getElementById('status').textContent = '❌ THREE.js failed to load';
+        console.error('THREE.js not loaded');
+        document.getElementById('status').textContent = '❌ THREE.js failed';
         return;
     }
 
-    console.log('THREE.js version:', THREE.REVISION);
-
-    // Initialize Three.js
     initThreeJS();
-
-    // Check AR support
-    const supported = await checkARSupport();
-
-    // Initialize hand tracking (optional)
+    initOrientationTracking();
+    await initDepthEstimation();
     await initHandTracking();
 
-    if (supported) {
-        console.log('✅ AR is ready! Click "Start AR" button.');
-    } else {
-        console.warn('⚠️ AR not supported on this device/browser.');
-        document.getElementById('start-ar').disabled = true;
-    }
-
-    console.log('=== Initialization Complete ===');
+    document.getElementById('status').textContent = '✅ Ready! Click Start AR';
+    console.log('Initialization complete');
 }
 
-// Start when page loads
-window.addEventListener('load', () => {
-    console.log('Page loaded, starting init...');
-    init();
-});
+window.addEventListener('load', init);

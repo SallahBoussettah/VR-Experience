@@ -7,8 +7,11 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- WebXR requires HTTPS or localhost -->
+    <!-- AR Container -->
     <div id="ar-container">
+        <!-- Webcam video background -->
+        <video id="webcam" autoplay playsinline style="display:none;"></video>
+
         <!-- Three.js AR canvas -->
         <canvas id="canvas"></canvas>
 
