@@ -18,17 +18,27 @@
         <!-- UI Overlay -->
         <div id="controls">
             <div class="control-panel">
-                <h2>AR Cube Builder</h2>
                 <div class="status" id="status">Checking AR support...</div>
-                <div class="instructions">
-                    <p><strong>👌 Pinch:</strong> Place/Move Cube</p>
+                <div class="instructions" id="main-instructions">
+                    <p><strong>👌 Pinch:</strong> Place Cube</p>
                     <p><strong>✊ Fist:</strong> Delete Cube</p>
-                    <p><strong>📱 Move phone:</strong> Cubes stay on surfaces</p>
                 </div>
                 <button id="start-ar" class="btn btn-primary">Start AR</button>
-                <button id="switch-camera" class="btn btn-secondary" style="display:none;">🔄 Switch Camera</button>
-                <button id="toggle-grid" class="btn">Grid Snap: <span id="grid-status">ON</span></button>
-                <button id="clear-all" class="btn btn-danger">Clear All</button>
+                <div class="button-row">
+                    <button id="switch-camera" class="btn btn-secondary" style="display:none;">🔄 Camera</button>
+                    <button id="toggle-grid" class="btn">Grid: <span id="grid-status">ON</span></button>
+                </div>
+                <button id="clear-all" class="btn btn-danger" style="display:none;">Clear All</button>
+            </div>
+        </div>
+
+        <!-- Error Message Box -->
+        <div id="error-box">
+            <h3>⚠️ WebXR Failed</h3>
+            <p id="error-message"></p>
+            <p id="error-solution"></p>
+            <div class="close-btn" onclick="document.getElementById('error-box').classList.remove('show')">
+                OK, Use Gyro Mode
             </div>
         </div>
 

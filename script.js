@@ -770,8 +770,10 @@ async function startAR() {
 
     document.getElementById('start-ar').style.display = 'none';
     document.getElementById('switch-camera').style.display = 'block';
+    document.getElementById('clear-all').style.display = 'block';
     document.getElementById('status').textContent = '✅ AR Active! (3DOF) Pinch to place';
     document.getElementById('ar-instructions').classList.add('active');
+    document.getElementById('main-instructions').classList.add('show');
 
     console.log('Gyro-based AR started (3DOF only)');
 }
@@ -954,11 +956,44 @@ async function startWebXRSession() {
 
         updateDebug('orientation', errorMsg);
 
-        // Show alert to user with helpful info
-        alert(`WebXR AR could not start.\n\nError: ${error.name}\n\nPossible fixes:\n1. Install "Google Play Services for AR" from Play Store\n2. Update Chrome to latest version\n3. Check if your Xiaomi Mi 11 Pro has ARCore support\n4. Grant camera permissions\n\nFalling back to gyroscope mode (3DOF).`);
+        // Show visible error box instead of alert
+        showErrorBox(error.name, error.message);
 
         return false;
     }
+}
+
+// Show error box with detailed info
+function showErrorBox(errorName, errorMessage) {
+    const errorBox = document.getElementById('error-box');
+    const errorMsgEl = document.getElementById('error-message');
+    const errorSolutionEl = document.getElementById('error-solution');
+
+    errorMsgEl.textContent = `Error: ${errorName} - ${errorMessage}`;
+
+    let solution = '';
+    if (errorName === 'NotSupportedError') {
+        solution = '📱 Install "Google Play Services for AR" from Play Store and restart Chrome.';
+    } else if (errorName === 'SecurityError') {
+        solution = '🔒 This site must use HTTPS. Check your URL starts with https://';
+    } else if (errorName === 'NotAllowedError') {
+        solution = '📷 Grant camera permission: Chrome Settings → Site Settings → Camera';
+    } else {
+        solution = '💡 Try: 1) Update Chrome 2) Check ARCore support 3) Restart phone';
+    }
+
+    errorSolutionEl.textContent = solution;
+    errorBox.classList.add('show');
+
+    // Also show in status
+    const statusEl = document.getElementById('status');
+    statusEl.classList.add('error');
+    statusEl.textContent = `❌ ${errorName}`;
+}
+
+// Hide error box
+function hideErrorBox() {
+    document.getElementById('error-box').classList.remove('show');
 }
 
 // Handle XR select (tap to place cube)
