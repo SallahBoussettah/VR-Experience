@@ -16,7 +16,7 @@ function updateDebug(key, value) {
 // Three.js Setup
 let scene, camera, renderer;
 let arCubes = [];
-let gridSize = 0.5;
+let gridSize = 0.2;  // Smaller grid for better precision
 let gridSnapEnabled = true;
 let selectedCube = null;
 
@@ -204,8 +204,8 @@ async function updateDepthMap() {
 
 // Convert screen position to 3D world
 function screenToWorld(screenX, screenY, depth) {
-    screenX = 1 - screenX; // Mirror
-
+    // Convert hand tracking coordinates (0-1) to NDC (-1 to 1)
+    // Don't mirror - use coordinates as-is
     const ndcX = (screenX * 2) - 1;
     const ndcY = -(screenY * 2) + 1;
 
@@ -220,7 +220,8 @@ function screenToWorld(screenX, screenY, depth) {
 
 // Create cube
 async function createCube(screenX, screenY, handDepth) {
-    const geometry = new THREE.BoxGeometry(gridSize, gridSize, gridSize);
+    const cubeSize = 0.15;  // 15cm cubes - easier to see
+    const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
     const material = new THREE.MeshStandardMaterial({
         color: Math.random() * 0xffffff,
         roughness: 0.4,
@@ -231,11 +232,8 @@ async function createCube(screenX, screenY, handDepth) {
     cube.castShadow = true;
     cube.receiveShadow = true;
 
-    // Get depth
-    let depth = await getDepthAtPoint(screenX, screenY);
-    if (isNaN(depth) || depth === null) {
-        depth = 1.0 + (1 - handDepth) * 2.5;
-    }
+    // Use a fixed reasonable depth (1 meter in front of camera)
+    const depth = 1.0;
 
     // Calculate world position
     const worldPos = screenToWorld(screenX, screenY, depth);
@@ -247,21 +245,15 @@ async function createCube(screenX, screenY, handDepth) {
 
     scene.add(cube);
 
-    // Store with camera-relative transform
-    const cameraRelativePos = worldPos.clone().sub(camera.position);
-    const cameraRotation = camera.quaternion.clone();
-
     const arCube = {
         mesh: cube,
         worldPosition: cube.position.clone(),
-        cameraRelativePosition: cameraRelativePos,
-        cameraRotation: cameraRotation.clone(),
         depth: depth,
-        locked: false
+        locked: true  // Lock immediately so it stays in place
     };
 
     arCubes.push(arCube);
-    console.log('Cube placed at:', cube.position);
+    console.log('Cube placed at:', cube.position, 'World pos:', worldPos);
 
     return cube;
 }
@@ -293,17 +285,12 @@ function clearAllCubes() {
     updateDebug('cubes', 0);
 }
 
-// Update AR anchors
+// Update AR anchors - keep cubes at their locked world positions
 function updateARAnchors() {
     arCubes.forEach(arCube => {
         if (arCube.locked) {
-            // Transform camera-relative to world space
-            const worldPos = arCube.cameraRelativePosition.clone();
-            worldPos.applyQuaternion(camera.quaternion);
-            worldPos.add(camera.position);
-
-            arCube.mesh.position.copy(worldPos);
-            arCube.worldPosition.copy(worldPos);
+            // Keep cube at its fixed world position
+            arCube.mesh.position.copy(arCube.worldPosition);
         }
     });
 }
@@ -337,7 +324,6 @@ function detectFist(landmarks) {
 
 // Find cube at screen position
 function findCubeAtScreenPosition(screenX, screenY) {
-    screenX = 1 - screenX;
     const ndcX = (screenX * 2) - 1;
     const ndcY = -(screenY * 2) + 1;
 
@@ -396,50 +382,11 @@ async function onHandResults(results) {
                 selectedCube = null;
             }
         }
-        // Spawn/move with pinch
-        else if (isPinching) {
-            if (!wasPinching) {
-                console.log('Pinch detected, checking for cube at position');
-                selectedCube = findCubeAtScreenPosition(screenX, screenY);
-
-                if (!selectedCube) {
-                    console.log('Creating new cube');
-                    selectedCube = await createCube(screenX, screenY, handDepth);
-                    updateDebug('cubes', arCubes.length);
-                } else {
-                    console.log('Selected existing cube');
-                    const arCube = arCubes.find(ac => ac.mesh === selectedCube);
-                    if (arCube) arCube.locked = false;
-                }
-            } else if (selectedCube) {
-                const arCube = arCubes.find(ac => ac.mesh === selectedCube);
-                if (arCube) {
-                    const worldPos = screenToWorld(screenX, screenY, arCube.depth);
-                    arCube.mesh.position.copy(worldPos);
-
-                    if (gridSnapEnabled) {
-                        snapToGrid(arCube.mesh);
-                    }
-
-                    arCube.worldPosition.copy(arCube.mesh.position);
-                    arCube.cameraRelativePosition = worldPos.clone().sub(camera.position);
-                }
-            }
-        } else {
-            // Released pinch - lock cube
-            if (wasPinching && selectedCube) {
-                const arCube = arCubes.find(ac => ac.mesh === selectedCube);
-                if (arCube) {
-                    if (gridSnapEnabled) {
-                        snapToGrid(arCube.mesh);
-                    }
-                    arCube.worldPosition.copy(arCube.mesh.position);
-                    arCube.cameraRelativePosition = arCube.worldPosition.clone().sub(camera.position);
-                    arCube.cameraRotation = camera.quaternion.clone();
-                    arCube.locked = true;
-                }
-            }
-            selectedCube = null;
+        // Spawn with pinch (simplified - just create, no moving)
+        else if (isPinching && !wasPinching) {
+            console.log('Pinch detected, creating new cube');
+            selectedCube = await createCube(screenX, screenY, handDepth);
+            updateDebug('cubes', arCubes.length);
         }
 
         wasPinching = isPinching;
