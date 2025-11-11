@@ -440,8 +440,23 @@ async function initWebcam() {
     videoElement = document.getElementById('webcam');
 
     try {
+        // Try to get back camera explicitly
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment', width: 1280, height: 720 }
+            video: {
+                facingMode: { exact: 'environment' },
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        }).catch(async (err) => {
+            console.warn('Exact environment failed, trying ideal...', err);
+            // Fallback if exact fails
+            return await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: 'environment',
+                    width: 1280,
+                    height: 720
+                }
+            });
         });
 
         videoElement.srcObject = stream;
