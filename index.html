@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Hand-Tracking Cube Builder - WebXR</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- WebXR requires HTTPS or localhost -->
+    <div id="ar-container">
+        <!-- Three.js AR canvas -->
+        <canvas id="canvas"></canvas>
+
+        <!-- UI Overlay -->
+        <div id="controls">
+            <div class="control-panel">
+                <h2>AR Cube Builder</h2>
+                <div class="status" id="status">Checking AR support...</div>
+                <div class="instructions">
+                    <p><strong>👌 Pinch:</strong> Place/Move Cube</p>
+                    <p><strong>✊ Fist:</strong> Delete Cube</p>
+                    <p><strong>📱 Move phone:</strong> Cubes stay on surfaces</p>
+                </div>
+                <button id="start-ar" class="btn btn-primary">Start AR</button>
+                <button id="toggle-grid" class="btn">Grid Snap: <span id="grid-status">ON</span></button>
+                <button id="clear-all" class="btn btn-danger">Clear All</button>
+            </div>
+        </div>
+
+        <!-- AR Instructions -->
+        <div id="ar-instructions">
+            <p>Point your phone at a flat surface (table, floor, desk)</p>
+            <p>Tap or pinch to place cubes on the surface</p>
+        </div>
+    </div>
+
+    <!-- Load Three.js (newer version with WebXR support) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.150.0/examples/js/webxr/ARButton.js"></script>
+
+    <!-- Load MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+    <!-- Main AR script -->
+    <script src="script.js"></script>
+</body>
+</html>

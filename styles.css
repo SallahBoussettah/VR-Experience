@@ -1,0 +1,204 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+}
+
+/* AR Container */
+#ar-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+}
+
+/* Three.js AR canvas */
+#canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    touch-action: none;
+}
+
+/* AR Instructions */
+#ar-instructions {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    padding: 15px 25px;
+    border-radius: 12px;
+    color: white;
+    text-align: center;
+    z-index: 10;
+    display: none;
+}
+
+#ar-instructions.active {
+    display: block;
+}
+
+#ar-instructions p {
+    margin: 5px 0;
+    font-size: 0.9em;
+}
+
+/* UI Controls */
+#controls {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 3;
+    pointer-events: none;
+}
+
+.control-panel {
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    padding: 20px;
+    border-radius: 12px;
+    color: white;
+    min-width: 250px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    pointer-events: all;
+}
+
+.control-panel h2 {
+    font-size: 1.2em;
+    margin-bottom: 15px;
+    text-align: center;
+    color: #4CAF50;
+}
+
+.status {
+    padding: 10px;
+    background: rgba(76, 175, 80, 0.2);
+    border-radius: 6px;
+    text-align: center;
+    margin-bottom: 15px;
+    font-size: 0.9em;
+    border: 1px solid #4CAF50;
+}
+
+.instructions {
+    margin: 15px 0;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    font-size: 0.85em;
+}
+
+.instructions p {
+    margin: 8px 0;
+    line-height: 1.5;
+}
+
+.instructions strong {
+    color: #4CAF50;
+    margin-right: 5px;
+}
+
+#grid-status {
+    color: #4CAF50;
+    font-weight: bold;
+}
+
+/* Buttons */
+.btn {
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0;
+    border: none;
+    border-radius: 6px;
+    background: #4CAF50;
+    color: white;
+    font-size: 0.9em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+}
+
+.btn-primary {
+    background: #2196F3;
+    box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
+}
+
+.btn-primary:hover {
+    background: #0b7dda;
+    box-shadow: 0 4px 12px rgba(33, 150, 243, 0.5);
+}
+
+.btn:hover {
+    background: #45a049;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.5);
+}
+
+.btn:active {
+    transform: translateY(0);
+}
+
+.btn-danger {
+    background: #f44336;
+    box-shadow: 0 2px 8px rgba(244, 67, 54, 0.3);
+}
+
+.btn-danger:hover {
+    background: #da190b;
+    box-shadow: 0 4px 12px rgba(244, 67, 54, 0.5);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    #controls {
+        top: 10px;
+        right: 10px;
+        left: 10px;
+    }
+
+    .control-panel {
+        min-width: auto;
+        padding: 15px;
+    }
+
+    .control-panel h2 {
+        font-size: 1em;
+    }
+
+    .instructions {
+        font-size: 0.75em;
+    }
+
+    .btn {
+        padding: 10px;
+        font-size: 0.85em;
+    }
+}
+
+/* Loading animation */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.status.loading {
+    animation: pulse 1.5s ease-in-out infinite;
+}
